@@ -1,0 +1,269 @@
+#!/usr/bin/env python3
+__author__ = 'Anubha'
+
+import boto3
+import inspect
+import sys, os
+from datetime import datetime
+from datetime import timedelta
+import datetime
+from configparser import ConfigParser
+
+parentddir = os.path.abspath('/cp-etl-apps/cp_elt_pipeline/automation_framework/main/python/utils')
+sys.path.append(parentddir)
+import config_utils as config_utils
+from secret_manager import get_secret_passwd
+
+
+class aws_lib(object):
+
+    def __init__(self, common_ini_filepath, subjectarea_configPath, lc):
+        self.lc = lc
+        self.subjectarea_configPath = subjectarea_configPath
+        self.common_ini_filepath = common_ini_filepath
+
+        self.aws_details = config_utils.readCommon(common_ini_filepath)
+        self.literals = config_utils.readLiterals(self.subjectarea_configPath)
+
+    def gzipBucketCheck(self):
+        # Checks existance of integration bucket for uploading gzipped file.
+        # if bucket doesn't exists creates bucket
+        source_bucket = self.aws_details['cp_int_bucket']
+        source_folder_to_parse = self.literals['INT_BUCKET_FOLDER'] + '/' + self.literals['YYYYMMDD']
+        self.bucketCheck(source_bucket, source_folder_to_parse)
+
+    def gzipBucketUpload(self, target_key, gzFile):
+        # source_bucket, source_folder_to_parse, target_bucket, encryption_type, kms_key, target_folder="",local_file
+        local_file = gzFile
+        target_bucket = self.aws_details['cp_int_bucket']
+        target_folder = target_key
+        encryption_type = self.aws_details['int_bucket_encryption_type']
+        kms_key = get_secret_passwd.get_secret_pass(self.aws_details['int_bucket_key'])
+
+        self.bucketUpload(local_file, target_bucket, target_folder, encryption_type, kms_key)
+
+    def ind_to_int_bucketTransfer(self):
+        # Transfers Individual bucket files to Integration bucket
+        source_bucket = self.literals['CP_INDIVIDUAL_BUCKET']
+        source_folder_to_parse = self.literals['IND_BUCKET_FOLDER'] if self.literals['IND_BUCKET_FOLDER'] != "" else \
+            self.literals[
+                'YYYYMMDD']
+        target_bucket = self.aws_details['cp_int_bucket']
+        target_folder = self.literals['INT_BUCKET_FOLDER']
+        encryption_type = self.aws_details['int_bucket_encryption_type']
+        kms_key = get_secret_passwd.get_secret_pass(self.aws_details['int_bucket_key'])
+
+        self.bucketTransfer(source_bucket, source_folder_to_parse,
+                            target_bucket, target_folder, encryption_type, kms_key)
+
+    def ind_files_to_int_bucketTransfer(self,report):
+        print("--------- Transfer Salesforce files to Integration bucket ------------")
+        source_bucket = self.literals['CP_INDIVIDUAL_BUCKET']
+        print(source_bucket)
+        if "[" in report:
+            
+            report1 = report.replace('[', '').replace(']', '').split(',')
+            
+        #report1=list(report.split(','))
+        print("report ",report1)
+        for report_name in report1:
+            source_file = self.indFilesToIntTransfer(source_bucket,report_name)
+            print(source_file)
+            target_bucket = self.aws_details['cp_int_bucket']
+            target_folder = self.literals['INT_BUCKET_FOLDER'] + '/' + self.literals['YYYYMMDD']
+            encryption_type = self.aws_details['int_bucket_encryption_type']
+            kms_key = get_secret_passwd.get_secret_pass(self.aws_details['int_bucket_key'])
+        
+            self.bucketTransfer(source_bucket, source_file,
+                                target_bucket, target_folder, encryption_type, kms_key)
+
+
+
+
+    def int_to_arc_bucketTransfer(self):
+        # Transfers Integration bucket to Archive
+        source_bucket = self.aws_details['cp_int_bucket']
+        source_folder_to_parse = self.literals['INT_BUCKET_FOLDER'] + '/' + self.literals['YYYYMMDD']
+        target_bucket = self.aws_details['cp_arc_bucket']
+        target_folder = ""
+        encryption_type = self.aws_details['archive_encryption_type']
+        kms_key = get_secret_passwd.get_secret_pass(self.aws_details['int_bucket_key'])
+
+        self.bucketTransfer(source_bucket, source_folder_to_parse,
+                            target_bucket, target_folder, encryption_type, kms_key)
+
+    def int_bucket_purging(self):
+        source_bucket = self.aws_details['cp_int_bucket']
+        if source_bucket == 'N' or source_bucket == '':
+            return
+        source_folder_to_purge = self.literals['INT_BUCKET_FOLDER'] + '/' + self.literals['YYYYMMDD']
+
+        self.lc.logfile.info("Purging file from {}/{}".format(source_bucket, source_folder_to_purge))
+        self.purge(source_bucket, source_folder_to_purge)
+
+    def ind_bucket_purging(self):
+        print("-------------In IND Purge---------------------")
+        source_bucket = self.literals['CP_INDIVIDUAL_BUCKET']
+        print("source_bucket: ",source_bucket)
+        if source_bucket == 'N' or source_bucket == '':
+            return
+        individual_purge_days = self.literals['IND_PURGE_DAYS']
+        print("individual_purge_days: ",individual_purge_days)
+        if individual_purge_days == '0' or individual_purge_days == '':
+            return
+        if ( self.literals['CP_INDIVIDUAL_BUCKET']!=""):
+            s3_resource = boto3.resource('s3')
+            my_bucket = s3_resource.Bucket(source_bucket)
+            today = datetime.date.today()
+       
+            check_date = (today - timedelta(days=int(individual_purge_days))).strftime('%Y-%m-%d')
+            print("check_date:",check_date)
+            source_folder_to_purge=""
+            self.lc.logfile.info("Purging file from {}/{}".format(source_bucket, source_folder_to_purge))
+            for file in my_bucket.objects.filter(Prefix=source_folder_to_purge):
+                file_date = file.last_modified.replace(tzinfo=None).strftime('%Y-%m-%d')
+                if file_date < check_date:
+                    print(file)
+                    file.delete()
+
+    def arc_bucket_purging(self):
+        source_bucket = self.aws_details['cp_arc_bucket']
+        if source_bucket == 'N' or source_bucket == '':
+            return
+
+        archive_purge_days = self.literals['ARC_PURGE_DAYS']
+        if archive_purge_days == '0' or archive_purge_days == '':
+            return
+
+        source_folder_to_purge = self.literals['ARC_BUCKET_FOLDER']
+        s3_resource = boto3.resource('s3')
+        my_bucket = s3_resource.Bucket(source_bucket)
+        today = datetime.date.today()
+        check_date = (today - timedelta(days=int(archive_purge_days))).strftime('%Y-%m-%d')
+        self.lc.logfile.info("Purging file from {}/{}".format(source_bucket, source_folder_to_purge))
+        for file in my_bucket.objects.filter(Prefix=source_folder_to_purge + '/'):
+            file_date = file.last_modified.replace(tzinfo=None).strftime('%Y-%m-%d')
+    
+            if file_date < check_date:
+                file.delete()
+                
+
+    def list_files(self, s3_bucket, folder_to_parse):
+        s3_client = boto3.client('s3')
+        s3_keys = []
+        response = s3_client.list_objects(
+            Bucket=s3_bucket,
+            Prefix=folder_to_parse
+        )
+
+        for item in response['Contents']:
+            s3_keys.append(item['Key'])
+        return s3_keys
+
+    def move_files(self, source_bucket, source_key, target_bucket, encryption_type, kms_key, target_key):
+        func = format(inspect.currentframe().f_code.co_name)
+        # print("{} -> Target key is {}".format(func, target_bucket + target_key))
+        s3_resource = boto3.resource("s3")
+        self.lc.logfile.info("{} -> Moving file from {} to {}".format(func, source_bucket + "/" + source_key,
+                                                                      target_bucket + "/" + target_key))
+
+        if encryption_type == 'AES256':
+            s3_resource.Object(target_bucket, target_key).copy_from(
+                CopySource={"Bucket": source_bucket, "Key": source_key},
+                ServerSideEncryption='AES256')
+        else:
+            s3_resource.Object(target_bucket,
+                               target_key).copy_from(
+                CopySource={"Bucket": source_bucket, "Key": source_key},
+                ServerSideEncryption='aws:kms',
+                SSEKMSKeyId=kms_key)
+
+        self.lc.logfile.info("{} -> File {} copied to target location {}".format(
+            func, source_bucket + "/" + source_key, target_bucket + "/" + target_key))
+
+    def bucketTransfer(self, source_bucket, source_folder_to_parse,
+                       target_bucket, target_folder, encryption_type, kms_key):
+        s3_keys = self.list_files(source_bucket, source_folder_to_parse)
+        for source_key in s3_keys:
+            target_key = (target_folder + "/" + source_key) if target_folder != "" else source_key
+            flag = self.move_files(source_bucket, source_key, target_bucket, encryption_type, kms_key, target_key)
+
+    def bucketUpload(self, local_file, target_bucket, target_folder, encryption_type, kms_key):
+        s3_client = boto3.client('s3')
+        if encryption_type == 'AES256':
+            s3_client.upload_file(local_file,
+                                  target_bucket,
+                                  target_folder,
+                                  ExtraArgs={"ServerSideEncryption": "AES256"})
+        else:
+            s3_client.upload_file(local_file,
+                                  target_bucket,
+                                  target_folder,
+                                  ExtraArgs={"ServerSideEncryption": "aws:kms",
+                                             "SSEKMSKeyId": kms_key})
+
+    def bucketCheck(self, source_bucket, source_folder_to_parse):
+        s3_client = boto3.client('s3')
+        response = s3_client.list_objects(Bucket=source_bucket, Prefix=source_folder_to_parse)
+        if 'ETag' not in str(response):
+            self.lc.logfile.info("Creating folder {} in AWS S3 bucket {}".format(source_folder_to_parse, source_bucket))
+            s3_client.put_object(Bucket=source_bucket, Key=(source_folder_to_parse + '/'))
+
+    def purge(self, source_bucket, source_folder_to_purge):
+        bucket_name = source_bucket
+        folder = source_folder_to_purge
+
+        s3_resource = boto3.resource("s3")
+        bucket = s3_resource.Bucket(bucket_name)
+        for key in bucket.objects.filter(Prefix=folder + '/'):
+            print("In purge: ",key)
+            #key.delete()
+
+
+    def indFilesToIntTransfer(self,source_bucket,file_name):
+        s3_resource = boto3.resource('s3')
+        my_bucket = s3_resource.Bucket(source_bucket)
+        prefix=file_name
+        from datetime import datetime
+        last_modified_date = datetime(2020, 1, 1).replace(tzinfo=None)
+        print(last_modified_date)
+        # Extract Last modified date of file in bucket
+        print("---------- Extract Last modified date of file in bucket ----------")
+        print("prefix::",prefix)
+        for file in my_bucket.objects.all():
+            if '/' not in file.key:
+                
+                if prefix in file.key:
+                    file_date = file.last_modified.replace(tzinfo=None)
+                    if last_modified_date < file_date:
+                        last_modified_date = file_date
+                else:
+                    continue
+
+        # you can have more than one file with this date, so you must iterate again
+        for file in my_bucket.objects.all():
+            if '/' not in file.key and file.last_modified.replace(tzinfo=None) == last_modified_date:
+                
+                if prefix in file.key:
+                    last_modified_file = file.key
+                    print(file.key)
+                    print(last_modified_date)
+
+                """
+                        # Extract files for the last modified date
+                        last_updated_file_list = []
+                        for file in my_bucket.objects.all():
+                            if '/' not in file.key:
+                                file_date = file.last_modified.replace(tzinfo=None).strftime('%Y-%m-%d')
+                                if file_date == last_modified_date:
+                                    last_updated_file_list.append(file.key)
+
+                        # you can have more than one file with this date, so you must iterate again
+                        for file in my_bucket.objects.all():
+                            if '/' not in file.key and file.last_modified.replace(tzinfo=None) == last_modified_date:
+                                last_updated_file = file.key
+                                print(file.key)
+                                print(last_modified_date)
+                        """
+
+        return last_modified_file

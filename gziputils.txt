@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+__author__ = 'Anubha'
+
+import sys, os
+from zipfile import ZipFile
+import gzip
+import boto3
+import fire
+import shutil
+
+parentddir = os.path.abspath('/cp-etl-apps/cp_elt_pipeline/automation_framework/main/python/module')
+sys.path.append(parentddir)
+from aws_lib import aws_lib
+
+parentddir = os.path.abspath('/cp-etl-apps/cp_elt_pipeline/automation_framework/main/python/utils')
+sys.path.append(parentddir)
+import config_utils as config_utils
+from secret_manager import get_secret_passwd
+
+"""
+import sys
+sys.path.append("/cp-etl-apps/cp_elt_pipeline/automation_framework/main/python/utils")
+import config_utils
+"""
+
+"""
+python3 zip_to_gzip_utils.py gzip_utils
+--LOCAL_IN_DIR = /cp-etl-apps/cp_elt_pipeline/automation_framework/main/python/source/walmart_mex/in/20200619
+--target_s3_file_upload_bucket="" --target_s3_file_upload_folder="" --encryption_type="" --kms_key=""
+--file_ext_gzip =.zip
+
+"""
+
+
+class gzipComp(object):
+
+    def __init__(self, common_ini_filepath, subjectarea_configPath, lc):
+        self.lc = lc
+        self.subjectarea_configPath = subjectarea_configPath
+        self.common_ini_filepath = common_ini_filepath
+
+        self.aws_details = config_utils.readCommon(common_ini_filepath)
+        self.literals = config_utils.readLiterals(self.subjectarea_configPath)
+
+        Main_Folder = self.subjectarea_configPath[:self.subjectarea_configPath.index("ini")]
+        self.LOCAL_IN_DIR = Main_Folder + self.literals['LOCAL_IN_DIR'] + '/' + self.literals['YYYYMMDD']
+
+        self.target_s3_file_upload_bucket = self.aws_details['cp_int_bucket']
+        self.target_s3_file_upload_folder = self.literals['INT_BUCKET_FOLDER'] + '/' + self.literals['YYYYMMDD']
+        self.encryption_type = self.aws_details['int_bucket_encryption_type']
+        self.kms_key = get_secret_passwd.get_secret_pass(self.aws_details['int_bucket_key'])
+        self.file_ext_gzip = self.literals["FILE_EXT_GZIP"]
+
+        if "[" in self.file_ext_gzip:
+            self.file_ext_gzip = self.file_ext_gzip.replace('[', '').replace(']', '').split(',')
+
+        self.LOCAL_IN_DIR = Main_Folder + self.literals['LOCAL_IN_DIR'] + '/' + self.literals['YYYYMMDD']
+
+    def list_all_files(self, zip_file_dir, file_ext):
+        zdir = []
+             
+        for file in os.listdir(zip_file_dir):
+            if file.endswith(file_ext):
+                zdir.append(os.path.join(zip_file_dir, file))
+        return zdir
+         
+
+    def zip_to_textfiles(self, zip_file_name):
+        print("zip_file_name",zip_file_name)
+        with ZipFile(zip_file_name, 'r') as zip:
+           
+            text_file = zip.open(name=zip.namelist()[-1], mode='r')
+            txtfile = text_file.read()        
+            text_file.close()
+        #print("TEXT FILE: ",'\n',txtfile)    
+        return txtfile
+
+    def gzip_utils(self):
+        LOCAL_IN_DIR = self.LOCAL_IN_DIR
+        file_ext_gzip = ".zip" if self.file_ext_gzip == 'N' else self.file_ext_gzip
+        for file_extention in file_ext_gzip:
+            if file_extention == ".txt":
+                if os.path.exists(self.LOCAL_IN_DIR + "/TEXT"):
+                    LOCAL_IN_DIR = self.LOCAL_IN_DIR + "/TEXT"
+            
+            files_list = self.list_all_files(LOCAL_IN_DIR, file_extention)
+            print("files_list:  ",files_list)
+            print ("file_extention: ",'\n',file_extention)
+            access_rights = 0o777
+            if files_list == []:
+                pass
+            else:    
+                if os.path.exists(LOCAL_IN_DIR + "/Gzip"):
+                    shutil.rmtree(LOCAL_IN_DIR + "/Gzip")
+                os.mkdir(LOCAL_IN_DIR + "/Gzip", mode=access_rights)
+                # os.chown(LOCAL_IN_DIR+"/Gzip", 1000, 1000)
+                
+                # Convert zip files to Gzip
+                print("----------------Zip to Gzip------------------------------------")
+                for file in files_list:
+                    index = file.rindex("/")
+                    gzip_file_name = file[:index + 1] + "Gzip" + "/" + (file[index + 1:].replace(file_extention, ".txt.gz"))
+                    if file_extention == ".zip":
+                        txt_file = self.zip_to_textfiles(file)
+                        with gzip.open(gzip_file_name, 'wb') as f:
+                            # os.chown(gzip_file_name, 1000, 1000)
+                            os.chmod(gzip_file_name, mode=access_rights)
+                            f.write(txt_file)
+             
+                    else:
+                        txt_file = open(file, "rb")
+                        data = txt_file.read()
+                        bindata = bytearray(data)
+                        with gzip.open(gzip_file_name, 'wb') as f:
+                            print("----- writing file at - ", gzip_file_name)
+                            # os.chown(gzip_file_name, 1000, 1000)
+                            os.chmod(gzip_file_name, mode=access_rights)
+                            f.write(bindata)                
+
+    def gzipUpload(self):
+        s3_bucket_name = self.target_s3_file_upload_bucket
+        LOCAL_IN_DIR = self.LOCAL_IN_DIR
+        print(LOCAL_IN_DIR)
+        file_ext_gzip = ".zip" if self.file_ext_gzip == 'N' else self.file_ext_gzip
+        print("file_ext_gzip:",file_ext_gzip)
+        for file_extention in file_ext_gzip:
+            print("In upload file extension: ",file_extention)
+            if file_extention == ".txt":
+                print("in loop: ",file_extention)
+                if os.path.exists(self.LOCAL_IN_DIR + "/TEXT"):
+                    LOCAL_IN_DIR = self.LOCAL_IN_DIR + "/TEXT"
+                              
+
+            gzip_file_dir = LOCAL_IN_DIR + "/Gzip/"
+            print("gzip_file_dir",'\n',gzip_file_dir)
+           
+            gzip_files=[]
+            if os.path.isdir(gzip_file_dir)==True:
+                gzip_files = self.list_all_files(gzip_file_dir, ".txt.gz")
+                print("gzip_files: ",gzip_files)
+            
+            if gzip_files == []:
+                print("-----No .txt.gz files found-----")
+                
+            else:    
+                for gzFile in gzip_files:
+                    index = gzFile.rindex("/")
+                    target_key = self.target_s3_file_upload_folder + "/" + gzFile[index + 1:]
+                    # Check target folder present in s3 bucket
+                    check_s3_file_upload_folder = aws_lib(self.common_ini_filepath, self.subjectarea_configPath, self.lc)
+                    check_s3_file_upload_folder.gzipBucketCheck()
+                    
+                    self.lc.logfile.info(
+                        "Copying File {} from local to S3 Bucket {}".format(gzFile, s3_bucket_name + "/" + target_key))
+                    local_to_int_bucket_upload = aws_lib(self.common_ini_filepath, self.subjectarea_configPath, self.lc)
+                    local_to_int_bucket_upload.gzipBucketUpload(target_key, gzFile)
+                    print("--------------upload completed--------------------")
+
+
+
+
+
+if __name__ == '__main__':
+    fire.Fire(gzipComp)

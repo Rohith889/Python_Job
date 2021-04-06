@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+__author__ = 'Anubha'
+
+import sqlparse
+import time
+
+from sqlparse import tokens
+
+def read_sql(file_path):
+    # Read a SQL script and removes comments and token from SQL.
+    # Args - SQL script file path
+    # Returns - Executable SQL without comments
+    sqls = []
+    final_sqls = []
+    with open(file_path, 'r') as f:
+        raw_sqls = f.read()
+        for statement in sqlparse.parse(raw_sqls):
+            new_tokens = [stm for stm in statement.tokens if not isinstance(stm, sqlparse.sql.Comment)]
+            new_statement = sqlparse.sql.TokenList(new_tokens)
+            if str(new_statement) != '\n':
+                sqls.append(str(new_statement))
+    return sqls

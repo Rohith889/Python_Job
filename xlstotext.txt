@@ -1,0 +1,70 @@
+import pandas as pd
+import sys, os
+import boto3
+import xlrd
+import fire
+import shutil
+#import html5lib
+
+parentddir = os.path.abspath('/cp-etl-apps/cp_elt_pipeline/automation_framework/main/python/utils')
+sys.path.append(parentddir)
+import config_utils as config_utils
+
+"""
+import sys
+sys.path.append("/cp-etl-apps/cp_elt_pipeline/automation_framework/main/python/utils")
+import config_utils
+"""
+
+"""
+python3 xls_to_txt.py xls_to_txt_conversion 
+--LOCAL_IN_DIR=/cp-etl-apps/cp_elt_pipeline/automation_framework/main/python/source/Kohls/in/20200607
+"""
+
+class xlsToTxt(object):
+    def __init__(self, subjectarea_configPath,lc):
+        self.lc = lc
+        self.subjectarea_configPath = subjectarea_configPath
+        self.literals = config_utils.readLiterals(self.subjectarea_configPath)
+        Main_Folder = self.subjectarea_configPath[:self.subjectarea_configPath.index("ini")]
+        self.LOCAL_IN_DIR = Main_Folder + self.literals['LOCAL_IN_DIR'] + '/' + self.literals['YYYYMMDD']
+        self.file_ext = self.literals['FILE_EXT_XLS']
+
+    def list_all_files(self, directory, file_ext):
+        zdir = []
+        for file in os.listdir(directory):
+            if file.endswith(file_ext):
+                zdir.append(os.path.join(directory, file))
+        return zdir
+
+    def xls_to_txt_conversion(self):
+        LOCAL_IN_DIR = self.LOCAL_IN_DIR
+        access_rights = 0o777
+        if os.path.exists(self.LOCAL_IN_DIR + "/TEXT") :
+            shutil.rmtree(self.LOCAL_IN_DIR + "/TEXT")
+        os.mkdir(self.LOCAL_IN_DIR + "/TEXT", mode=access_rights)
+        #os.chown(self.LOCAL_IN_DIR + "/TEXT", 1000, 1000)
+        file_ext = self.file_ext
+        print("LOCAL_IN_DIR : ",LOCAL_IN_DIR)
+        print("file_ext : ",file_ext)
+
+        xls_files = self.list_all_files(LOCAL_IN_DIR, file_ext)
+        print("xls_files : ",xls_files)
+
+        for file in xls_files:
+            print("file : ",file)
+            if file_ext == ".xls" :
+                df1 = pd.read_html(file)
+                df = df1[0]
+            else :
+                df = pd.read_excel(file,dtype='object')
+            file_index = file.rindex("/")
+            text_file_name = file[:file_index + 1] + "TEXT" + "/" + (file[file_index + 1:].replace(file_ext, ".txt"))
+            df.to_csv(text_file_name, sep='\t', index=False)
+            #os.chown(text_file_name, 1000, 1000)
+            print("Output File name : ",text_file_name)
+            self.lc.logfile.info("\n")
+            self.lc.logfile.info("File Converted from {} to {} in Local".format(file,text_file_name))
+
+if __name__ == '__main__':
+    fire.Fire(xlsToTxt)

@@ -1,0 +1,244 @@
+import sys
+import os
+import sys
+from selenium import webdriver
+from selenium.webdriver.remote.webelement import WebElement
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.chrome.options import Options
+import time
+import shutil
+import fnmatch
+import datetime
+from datetime import datetime, timedelta
+from selenium.webdriver.common.keys import Keys
+from zipfile import ZipFile
+from selenium.webdriver.support.ui import Select
+from datetime import date 
+from bs4 import BeautifulSoup
+import pandas as pd
+parentddir = os.path.abspath('/cp-etl-apps/cp_elt_pipeline/automation_framework/main/python/utils/')
+sys.path.append(parentddir)
+import sql_utils as sql_utils
+import config_utils as config_utils
+from gzip_utils import gzipComp
+from ext_to_int import extToLocal
+from xls_to_txt import xlsToTxt
+from logger import LoggerClient
+from secret_manager import get_secret_passwd
+from ext_to_int import extToLocal
+parentddir = os.path.abspath('/cp-etl-apps/cp_elt_pipeline/automation_framework/main/python/module/')
+sys.path.append(parentddir)
+from CP_lib import CP_Client
+
+
+
+
+
+# function to take care of downloading file
+def enable_download_headless(browser, download_dir):
+    browser.command_executor._commands["send_command"] = ("POST", '/session/$sessionId/chromium/send_command')
+    params = {'cmd': 'Page.setDownloadBehavior', 'params': {'behavior': 'allow', 'downloadPath': download_dir}}
+    browser.execute("send_command", params)
+
+def login(direc,url,user,pwd):
+    print("-------------------in loginn----")
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("window-size=1400,1500")
+    options.add_argument("--disable-notifications")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    options.add_argument('--verbose')
+    options.add_argument('--disable-software-rasterizer')
+    download_dir = os.path.abspath(direc)
+    sys.path.append(download_dir)
+    options.add_experimental_option("prefs", {
+        "download.default_directory": download_dir,
+        "download.prompt_for_download": False,
+        "download.directory_upgrade": True,
+        "safebrowsing_for_trusted_sources_enabled": False,
+        "safebrowsing.enabled": False})
+    driver = webdriver.Chrome(options=options)    
+    driver.wait = WebDriverWait(driver, 40)
+    driver.get(url)
+    time.sleep(5)   
+    driver.maximize_window()
+    time.sleep(3)          
+    Amazon_Username = driver.wait.until(EC.presence_of_element_located((By.XPATH,"/html/body/div/div/div/div/div[2]/div[1]/div/div/form/span[1]/span/span/input")))
+    Amazon_Username.click()
+    time.sleep(2)    
+    Amazon_Username.send_keys(user)
+    time.sleep(3)      
+    Pwd_Txtbox= driver.wait.until(EC.presence_of_element_located((By.XPATH, "/html/body/div/div/div/div/div[2]/div[1]/div/div/form/span[2]/span/span/input")))
+    time.sleep(2)
+    Pwd_Txtbox.send_keys(pwd)
+    time.sleep(3)
+    #beforeTitle = driver.getTitle()
+    LogIn = driver.wait.until(EC.presence_of_element_located((By.XPATH,"/html/body/div/div/div/div/div[2]/div[1]/div/div/form/button/span")))
+    LogIn.click()
+    time.sleep(10)
+    print("login complete")
+    return driver
+def change_country(country,direc,url,user,pwd,lc):
+    print("-------------------in change country----")
+
+    driver=login(direc,url,user,pwd)
+    time.sleep(10)
+    select_element= driver.find_element_by_css_selector("#rlHeaderMiniMenu > ul > li.dropdown.mininav_lang_fix > a")
+    time.sleep(3)
+    select_element.click()
+    time.sleep(10)
+    select_element_1= driver.find_element_by_css_selector(country)#CA_ENG #MX_ENG #US_ENG
+    time.sleep(3)
+    select_element_1.click()
+    time.sleep(3)
+    alert_obj = driver.switch_to.alert
+    time.sleep(3)
+    alert_obj.accept()#rlHeaderMiniMenu > ul > li.rlHeaderMenuRight > a
+    time.sleep(3)
+    log_out_button= driver.find_element_by_css_selector("#rlHeaderMiniMenu > ul > li.rlHeaderMenuRight > a")
+    time.sleep(3)
+    log_out_button.click()
+    print("-----Log Out Button Clicked----------------")
+
+    time.sleep(40)
+    Amazon_Username = driver.wait.until(EC.presence_of_element_located((By.XPATH,"/html/body/div/div/div/div/div[2]/div[1]/div/div/form/span[1]/span/span/input")))
+    Amazon_Username.click()
+    time.sleep(2)    
+    Amazon_Username.send_keys(user)
+    time.sleep(3)      
+    Pwd_Txtbox= driver.wait.until(EC.presence_of_element_located((By.XPATH,"/html/body/div/div/div/div/div[2]/div[1]/div/div/form/span[2]/span/span/input")))    
+    time.sleep(2)
+    Pwd_Txtbox.send_keys(pwd)
+    time.sleep(3)
+    #beforeTitle = driver.getTitle()
+    LogIn = driver.wait.until(EC.presence_of_element_located((By.XPATH,"/html/body/div/div/div/div/div[2]/div[1]/div/div/form/button/span")))
+    LogIn.click()
+    time.sleep(10)
+    print("login complete in Change country")
+
+
+
+
+
+def download_file(DIVISION_COUNTRY,VENDOR_NUMBER,coun,direc,url,user,pwd,lc):
+    print("-------------------in download report----")
+
+    driver = login(direc,url,user,pwd)
+    download_dir = os.path.abspath(direc)
+    enable_download_headless(driver, download_dir)
+    print("download_dir - ", download_dir)
+    time.sleep(45)
+    print("-----Initiating Select_element-----")
+    #select_element= Select(driver.wait.until(EC.presence_of_element_located((By.XPATH, "/html/body/form/table/tbody/tr/td[2]/div/table/tbody/tr[3]/td[2]/table/tbody/tr[1]/td[2]/select"))))
+    try:
+        variable = 'DIVISION_COUNTRY'
+        select_element = Select(driver.wait.until(EC.presence_of_element_located((By.XPATH, "/html/body/form/table/tbody/tr/td[2]/div/table/tbody/tr[3]/td[2]/table/tbody/tr[1]/td[2]/select"))))
+        time.sleep(40)
+        select_element.select_by_visible_text(DIVISION_COUNTRY)
+        print("At Argument1",DIVISION_COUNTRY)
+        variable = 'VENDOR_NUMBER'
+        select_element_1 = Select(driver.wait.until(EC.presence_of_element_located(
+        (By.XPATH, "/html/body/form/table/tbody/tr/td[2]/div/table/tbody/tr[3]/td[2]/table/tbody/tr[3]/td[2]/select"))))
+        time.sleep(40)
+        select_element_1.select_by_visible_text(VENDOR_NUMBER)
+        print("At Argument2",VENDOR_NUMBER)
+        variable='REQUEST_STATUS'
+        select_element_2 = Select(driver.wait.until(EC.presence_of_element_located(
+        (By.XPATH, "/html/body/form/table/tbody/tr/td[2]/div/table/tbody/tr[3]/td[2]/table/tbody/tr[5]/td[2]/select"))))
+        time.sleep(40)
+        select_element_2.select_by_visible_text("New")
+        variable=''
+       
+        date = driver.find_element(By.CSS_SELECTOR,
+                                   "#content-area > table > tbody > tr:nth-child(3) > td:nth-child(2) > table > tbody > tr:nth-child(7) > td:nth-child(2) > table > tbody > tr > td:nth-child(2) > img")
+        date.click()
+        print("------------- Date clicked ------------------------")
+        from_date_month = Select(
+            driver.find_element_by_css_selector("#ui-datepicker-div > div > div > select.ui-datepicker-month"))
+        from_date_month.select_by_visible_text("Jan")
+        from_date_year = Select(
+            driver.find_element_by_css_selector("#ui-datepicker-div > div > div > select.ui-datepicker-year"))
+        from_date_year.select_by_visible_text("2018")
+        from_date_day = driver.find_element(By.CSS_SELECTOR,
+                                            "#ui-datepicker-div > table > tbody > tr:nth-child(1) > td:nth-child(3) > a")
+        from_date_day.click()
+        time.sleep(5)
+        submit_button = driver.find_element(By.CSS_SELECTOR,"#ctl00_cphMain_btnSubmit")
+        submit_button.click()
+    
+    except Exception as err:
+        if variable!='':
+            lc.logfile.info("Error message is null, Error could be due to webpage element not loaded correctly: "+str(variable))
+        else:
+            lc.logfile.info("ERROR: ",+str(err))
+    download_button = driver.find_element(By.CSS_SELECTOR, "#ctl00_cphMain_imgbtnExcel")
+    download_button.click()
+    print("------------- download button clicked ------------")
+    time.sleep(50)
+    print("==============================Download Successfull==================================") 
+    driver.close()                
+
+  
+
+        
+
+
+def renames(directory,ext,newname,lc):
+    Y=date.today().strftime('%Y')
+    M=date.today().strftime('%m')
+    D=date.today().strftime('%d')
+    DATE=Y+M+D
+    print("Current_Date:\n",DATE)
+    try:
+        os.mkdir(directory+DATE)
+    except:
+        print("Current directory exists")	
+    files = os.listdir(directory)
+    z=[]
+    for f in files:
+        if f.endswith(ext):
+            z.append(f)
+            print(f)
+    for i in z:
+        old= directory + i
+        new = directory + DATE + '/' + newname + ext
+        print("Downloaded Report:\n",old)
+        print("Renamed as:\n",new)
+        os.rename(old,new)
+
+
+
+def itemsharedownload(Main_Folder,subject_area,lc):
+    print("=========================")
+    #section= subject_area.split('_')[0]
+    spec_ini= Main_Folder + '/'+'ini/'+subject_area + '/'+ subject_area + '_dml.ini'
+    literals = config_utils.readLiterals(spec_ini)
+    download_dir = Main_Folder + 'Data' + '/' + subject_area + '/'+'in' + '/'
+    #print("there",download_dir)
+    itm = config_utils.getConfigSection(spec_ini,"REPORT")
+    #parameter = config_utils.getConfigSection(spec_ini,"PARAMETER")
+    url = itm['itms_url']
+    user = itm['retail_user_name']
+    pwd = get_secret_passwd.get_secret_pass(itm['retail_pass_key'])
+    #print("pssss",pwd)
+    con= itm['country']
+    DIVISION_COUNTRY= itm['division_country']
+    VENDOR_NUMBER = itm['vendor_number']
+    name = itm['item_share_file_prefix']
+    print("DIVISION_COUNTRY", DIVISION_COUNTRY)
+    print("VENDOR_NUMBER", VENDOR_NUMBER)
+    print("Country", con)
+    lc.logfile.info("---------------Changing Country----------------------")
+    country_ca = change_country(con,download_dir,url,user,pwd,lc)
+    lc.logfile.info("---------------ItemShare Report Page----------------------")
+    download_file_ca = download_file(DIVISION_COUNTRY,VENDOR_NUMBER,con,download_dir,url,user,pwd,lc)
+    lc.logfile.info("---------------Renaming ItemShare Report----------------------")
+    renames(download_dir,'.xls',name,lc)
+    lc.logfile.info("---------------ItemShare Report Download Successfull----------------------")
+        
